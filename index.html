@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ujian Online SMPN 4 Satap Susukan</title>
+    <style>
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #f4f7f6; margin: 0; padding: 20px; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h2, h3 { color: #2c3e50; text-align: center; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select, textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; }
+        button { background: #3498db; color: white; border: none; padding: 12px 18px; border-radius: 6px; cursor: pointer; width: 100%; font-size: 16px; margin-top: 10px; font-weight: bold; }
+        button:hover { background: #2980b9; }
+        .btn-danger { background: #e74c3c; }
+        .btn-danger:hover { background: #c0392b; }
+        .card { background: #fafafa; border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 8px; }
+        .hidden { display: none; }
+        .score-badge { background: #2ecc71; color: white; padding: 6px 14px; border-radius: 20px; font-weight: bold; }
+        .status-box { padding: 10px; background: #e8f4f8; border-left: 4px solid #3498db; margin-bottom: 15px; font-size: 14px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- 1. HALAMAN LOGIN -->
+    <div id="login-screen">
+        <h2>Login Ujian Online</h2>
+        <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="login-username" placeholder="Masukkan username">
+        </div>
+        <div class="form-group">
+            <label>Password (NISN / Pass Guru)</label>
+            <input type="password" id="login-password" placeholder="Masukkan password">
+        </div>
+        <button onclick="login()">Masuk</button>
+        <p id="login-error" style="color:red; text-align:center; margin-top:10px;"></p>
+    </div>
+
+    <!-- 2. DASHBOARD GURU -->
+    <div id="teacher-screen" class="hidden">
+        <h2>Panel Guru</h2>
+        <button class="btn-danger" onclick="logout()">Keluar</button>
+        <hr>
+        <h3>Tambah Soal Baru</h3>
+        <div class="form-group">
+            <label>Pertanyaan Ujian</label>
+            <textarea id="question-text" rows="3" placeholder="Tuliskan soal ujian..."></textarea>
+        </div>
+        <div class="form-group">
+            <label>Kunci Jawaban Singkat</label>
+            <input type="text" id="question-key" placeholder="Contoh: Jakarta">
+        </div>
+        <button onclick="addQuestion()" id="btn-save-q">Simpan & Terbitkan Soal</button>
+
+        <h3>Daftar Soal Aktif (Online)</h3>
+        <div id="teacher-questions-list">Memuat data...</div>
+
+        <h3>Hasil / Nilai Ujian Siswa</h3>
+        <div id="teacher-results-list">Memuat data...</div>
+    </div>
+
+    <!-- 3. DASHBOARD SISWA -->
+    <div id="student-screen" class="hidden">
+        <h2>Portal Ujian Siswa</h2>
+        <div class="status-box">
+            Nama: <strong id="student-name"></strong> | Kelas: <strong id="student-class"></strong>
+        </div>
+        <button class="btn-danger" onclick="logout()">Keluar</button>
+        <hr>
+
+        <div id="student-quiz-area">
+            <h3>Daftar Soal Ujian</h3>
+            <div id="student-questions-container">Memuat soal...</div>
+            <button id="btn-submit" onclick="submitExam()" class="hidden">Kirim Jawaban</button>
+        </div>
+
+        <div id="student-result-area" class="card hidden">
+            <h3>Hasil Ujian Anda</h3>
+            <p>Status: <span style="color:green; font-weight:bold;">Selesai Mengerjakan</span></p>
+            <p>Nilai Akhir: <span id="student-score" class="score-badge">0</span> / 100</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Server cloud gratis publik untuk sinkronisasi antar HP
+    const CLOUD_URL = 'https://api.npoint.io/87d7bf2e7428f5efd4d4';
+
+    const users = {
+        "guru": { pass: "admin123", name: "Budi Mulyono, S.Pd.", role: "teacher" },
+        "ajengayucand": { pass: "3143228981", name: "AJENG AYU CANDIKA", class: "7", role: "student" },
+        "andhikaevanb": { pass: "137128014", name: "ANDHIKA EVAN BAHTIAR", class: "7", role: "student" },
+        "afidkhomarud": { pass: "123037450", name: "AFID KHOMARUDIN", class: "8", role: "student" },
+        "adesaputra": { pass: "113773806", name: "ADE SAPUTRA", class: "9", role: "student" }
+        // ... Tambahkan akun siswa lainnya dari daftar tabel jika diperlukan
+    };
+
+    let currentUser = null;
+    let dbData = { questions: [], submissions: {} };
+
+    async function loadCloudData() {
+        try {
+            let response = await fetch(CLOUD_URL);
+            if(response.ok) {
+                dbData = await response.json();
+                if(!dbData.questions) dbData.questions = [];
+                if(!dbData.submissions) dbData.submissions = {};
+            }
+        } catch(e) {
+            console.log("Gagal memuat dari server", e);
+        }
+    }
+
+    async function saveCloudData() {
+        try {
+            await fetch(CLOUD_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(dbData)
+            });
+            return true;
+        } catch(e) {
+            alert("Gagal koneksi internet ke server cloud!");
+            return false;
+        }
+    }
+
+    async function login() {
+        const u = document.getElementById('login-username').value.trim();
+        const p = document.getElementById('login-password').value.trim();
+        
+        if (users[u] && users[u].pass === p) {
+            currentUser = { username: u, ...users[u] };
+            document.getElementById('login-screen').classList.add('hidden');
+            
+            await loadCloudData();
+
+            if (currentUser.role === 'teacher') {
+                document.getElementById('teacher-screen').classList.remove('hidden');
+                renderTeacherView();
+            } else {
+                document.getElementById('student-screen').classList.remove('hidden');
+                document.getElementById('student-name').innerText = currentUser.name;
+                document.getElementById('student-class').innerText = currentUser.class;
+                renderStudentView();
+            }
+        } else {
+            document.getElementById('login-error').innerText = "Username atau Password salah!";
+        }
+    }
+
+    function logout() {
+        location.reload();
+    }
+
+    async function addQuestion() {
+        const qText = document.getElementById('question-text').value.trim();
+        const qKey = document.getElementById('question-key').value.trim();
+        if (!qText) return alert("Pertanyaan tidak boleh kosong!");
+
+        const btn = document.getElementById('btn-save-q');
+        btn.innerText = "Menyimpan ke Online...";
+        btn.disabled = true;
+
+        dbData.questions.push({ id: Date.now(), question: qText, key: qKey });
+        await saveCloudData();
+        
+        document.getElementById('question-text').value = '';
+        document.getElementById('question-key').value = '';
+        btn.innerText = "Simpan & Terbitkan Soal";
+        btn.disabled = false;
+
+        renderTeacherView();
+        alert("Soal berhasil diterbitkan! Siswa di HP lain sudah bisa melihat soal ini.");
+    }
+
+    function renderTeacherView() {
+        let qContainer = document.getElementById('teacher-questions-list');
+        if (dbData.questions.length === 0) {
+            qContainer.innerHTML = '<p style="color:gray;">Belum ada soal. Buat soal pertama Anda di atas.</p>';
+        } else {
+            qContainer.innerHTML = dbData.questions.map((q, i) => 
+                `<div class="card"><b>Soal ${i+1}:</b> ${q.question}<br><small style="color:green;">Kunci: ${q.key}</small></div>`
+            ).join('');
+        }
+
+        let rContainer = document.getElementById('teacher-results-list');
+        let html = '';
+        for (let user in dbData.submissions) {
+            let namaSiswa = users[user] ? users[user].name : user;
+            html += `<div class="card">
+                <strong>${namaSiswa}</strong><br>
+                Nilai: <span class="score-badge">${dbData.submissions[user].score}</span>
+            </div>`;
+        }
+        rContainer.innerHTML = html || '<p style="color:gray;">Belum ada siswa yang mengirimkan jawaban.</p>';
+    }
+
+    function renderStudentView() {
+        if (dbData.submissions && dbData.submissions[currentUser.username]) {
+            document.getElementById('student-quiz-area').classList.add('hidden');
+            document.getElementById('student-result-area').classList.remove('hidden');
+            document.getElementById('student-score').innerText = dbData.submissions[currentUser.username].score;
+            return;
+        }
+
+        let container = document.getElementById('student-questions-container');
+        if (!dbData.questions || dbData.questions.length === 0) {
+            container.innerHTML = '<p style="color:gray;">Belum ada soal ujian dari guru. Silakan buka kembali nanti.</p>';
+            document.getElementById('btn-submit').classList.add('hidden');
+            return;
+        }
+
+        container.innerHTML = dbData.questions.map((q, i) => `
+            <div class="card">
+                <p><b>${i+1}. ${q.question}</b></p>
+                <input type="text" id="ans-${q.id}" placeholder="Ketik jawaban Anda di sini...">
+            </div>
+        `).join('');
+        document.getElementById('btn-submit').classList.remove('hidden');
+    }
+
+    async function submitExam() {
+        let correctCount = 0;
+        let questions = dbData.questions;
+
+        questions.forEach(q => {
+            let el = document.getElementById(`ans-${q.id}`);
+            let ans = el ? el.value.trim().toLowerCase() : '';
+            if (ans === q.key.trim().toLowerCase()) {
+                correctCount++;
+            }
+        });
+
+        let finalScore = questions.length > 0 ? Math.round((correctCount / questions.length) * 100) : 0;
+        
+        if(!dbData.submissions) dbData.submissions = {};
+        dbData.submissions[currentUser.username] = { score: finalScore, date: new Date().toISOString() };
+        
+        let btn = document.getElementById('btn-submit');
+        btn.innerText = "Mengirim...";
+        btn.disabled = true;
+
+        await saveCloudData();
+        alert("Jawaban Anda berhasil terkirim ke Guru!");
+        renderStudentView();
+    }
+</script>
+</body>
+</html>
